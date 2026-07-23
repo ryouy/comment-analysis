@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 
 def _bool(name: str, default: bool) -> bool:
     return os.getenv(name, str(default)).lower() in {"1", "true", "yes", "on"}
@@ -44,6 +46,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        load_dotenv()
         return cls(
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             openai_text_model=os.getenv("OPENAI_TEXT_MODEL", "gpt-4.1-mini"),

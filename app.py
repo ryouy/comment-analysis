@@ -10,18 +10,10 @@ from typing import Any
 import streamlit as st
 from pydantic import ValidationError
 
-from src.analysis.pipeline import AnalysisPipeline
 from src.config.settings import Settings
 from src.domain.models import AnalysisBundle, Article, Comment
 from src.ingestion.normalized_loader import load_dataset, parse_dataset
 from src.ingestion.web_loader import WebIngestionError, WebIngestionService
-from src.ui.views import (
-    render_emotion,
-    render_notice,
-    render_opinion,
-    render_quality,
-    render_relation,
-)
 
 SAMPLE_PATH = Path(__file__).parent / "data" / "sample_article.json"
 
@@ -217,9 +209,12 @@ def render_start(settings: Settings) -> None:
     with st.expander("本文を確認"):
         st.write(article.body or "本文なし")
     analyze, rerun = st.columns(2)
-    start = analyze.button("分析開始", type="primary", use_container_width=True)
-    force = rerun.button("再分析（キャッシュを更新）", use_container_width=True)
+    start = analyze.button("分析開始", type="primary", width="stretch")
+    force = rerun.button("再分析（キャッシュを更新）", width="stretch")
     if start or force:
+        # scikit-learn等の重い依存は、実際に分析するときだけ読み込む。
+        from src.analysis.pipeline import AnalysisPipeline
+
         bar = st.progress(0.0)
         label = st.empty()
         try:
@@ -247,7 +242,7 @@ def render_start(settings: Settings) -> None:
 def main() -> None:
     st.set_page_config(
         page_title="ニュース・コメント分析",
-        page_icon="🛰️",
+        page_icon="",
         layout="wide",
     )
     st.title("ニュース・コメント分析ラボ")
@@ -259,6 +254,14 @@ def main() -> None:
         render_start(settings)
     bundle_json = st.session_state.get("bundle_json")
     if bundle_json:
+        # pandas/Plotlyは結果表示時だけ読み込み、初期画面のメモリを抑える。
+        from src.ui.views import (
+            render_emotion,
+            render_opinion,
+            render_quality,
+            render_relation,
+        )
+
         bundle = AnalysisBundle.model_validate_json(bundle_json)
         for warning in bundle.warnings:
             st.sidebar.warning(warning)
@@ -278,7 +281,13 @@ def main() -> None:
         for tab in (relation_tab, opinion_tab, emotion_tab, quality_tab):
             with tab:
                 st.info("「分析開始」タブでデータを選び、分析を実行してください。")
-    render_notice()
+    st.divider()
+    st.caption(
+        "この分析は取得できたコメントのみを対象とし、社会全体の世論を表しません。"
+        "感情・立場・レトリックはAIまたはローカル特徴量による推定で、誤判定を含みます。"
+        "少数意見は重要性を保証せず、類似線はコピーや影響関係を断定しません。"
+        "見出し分析は編集意図を断定せず、健全性指標は人や集団の価値を評価しません。"
+    )
 
 
 if __name__ == "__main__":

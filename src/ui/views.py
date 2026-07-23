@@ -71,7 +71,7 @@ def render_relation(bundle: AnalysisBundle) -> None:
         rows["表示値"] = rows["comment_count"]
     st.dataframe(
         rows[["sentence_id", "text", "is_headline", "comment_count", "表示値"]],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     sentence_id = st.selectbox(
@@ -103,7 +103,7 @@ def render_relation(bundle: AnalysisBundle) -> None:
     )
     st.plotly_chart(
         px.bar(component_frame, x="値", y="構成要素", orientation="h"),
-        use_container_width=True,
+        width="stretch",
     )
     with st.expander("算出式と定義"):
         st.code(
@@ -129,7 +129,7 @@ def render_relation(bundle: AnalysisBundle) -> None:
                 },
             )
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         link_index = st.selectbox(
             "流れを選択",
             range(len(drift["links"])),
@@ -179,7 +179,7 @@ def render_opinion(bundle: AnalysisBundle) -> None:
             hover_data=["comment_id", "dominant_emotion", "originality", "relevance"],
             render_mode="webgl",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         st.caption(f"{galaxy['reducer']} / {galaxy['clusterer']}（同一入力で再現可能）")
         evidence_comments(
             bundle, frame["comment_id"].tolist(), "galaxy-comment", "点を選択"
@@ -188,13 +188,13 @@ def render_opinion(bundle: AnalysisBundle) -> None:
         st.info(galaxy["reason"])
     st.dataframe(
         pd.DataFrame([item.model_dump(exclude={"dominant_emotions"}) for item in bundle.clusters]),
-        use_container_width=True,
+        width="stretch",
     )
 
     st.subheader("F07 少数意見発見器")
     minority = bundle.features["minority_signals"]
     if minority:
-        st.dataframe(pd.DataFrame(minority), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(minority), width="stretch", hide_index=True)
         evidence_comments(
             bundle,
             [item["comment_id"] for item in minority],
@@ -216,7 +216,7 @@ def render_opinion(bundle: AnalysisBundle) -> None:
                 orientation="h",
                 color="dominant_emotion",
             ),
-            use_container_width=True,
+            width="stretch",
         )
         st.plotly_chart(
             px.scatter(
@@ -226,7 +226,7 @@ def render_opinion(bundle: AnalysisBundle) -> None:
                 size="count",
                 color="dominant_emotion",
             ),
-            use_container_width=True,
+            width="stretch",
         )
         selected_phrase = st.selectbox("フレーズを選択", [item["phrase"] for item in phrases])
         selected = next(item for item in phrases if item["phrase"] == selected_phrase)
@@ -272,7 +272,7 @@ def render_emotion(bundle: AnalysisBundle) -> None:
         )
         for point in timeline["change_points"]:
             fig.add_vline(x=point["position"], line_dash="dash", line_color="#d62728")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         st.caption(
             f"自動ビン幅: {timeline['window_size']}コメント / "
             f"急変点: {len(timeline['change_points'])}件"
@@ -358,8 +358,8 @@ def render_emotion(bundle: AnalysisBundle) -> None:
             )
         )
         graph.update_layout(xaxis_title="投稿順", yaxis_title="類似グループ")
-        st.plotly_chart(graph, use_container_width=True)
-        st.dataframe(edge_frame, use_container_width=True, hide_index=True)
+        st.plotly_chart(graph, width="stretch")
+        st.dataframe(edge_frame, width="stretch", hide_index=True)
         edge_index = st.selectbox(
             "類似関係",
             range(len(propagation["edges"])),
@@ -385,7 +385,7 @@ def render_quality(bundle: AnalysisBundle) -> None:
     )
     st.plotly_chart(
         px.bar(health_frame, x="値", y="指標", orientation="h", range_x=[0, 100]),
-        use_container_width=True,
+        width="stretch",
     )
     st.caption(f"信頼度 {health['confidence'] * 100:.0f}% — {health['warning']}")
     with st.expander("指標定義"):
@@ -420,7 +420,7 @@ def render_quality(bundle: AnalysisBundle) -> None:
                 size=quality["empathy_count"].map(lambda value: max(5, value + 1)),
                 hover_data=["comment_id", "insufficient_material"],
             ),
-            use_container_width=True,
+            width="stretch",
         )
         evidence_comments(
             bundle, quality["comment_id"].tolist(), "quality-comments", "点を選択"
@@ -434,7 +434,7 @@ def render_quality(bundle: AnalysisBundle) -> None:
         item for item in rhetoric["items"] if item["probability"] >= threshold
     ]
     if visible:
-        st.dataframe(pd.DataFrame(visible), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(visible), width="stretch", hide_index=True)
         evidence_comments(
             bundle,
             [item["comment_id"] for item in visible],
