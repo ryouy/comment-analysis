@@ -161,6 +161,7 @@ class LocalAnalysisClient:
                         evidence_span=span,
                         explanation="対象範囲を広く一般化する表現の可能性があります",
                         uncertainty="強調表現として使われた可能性もあります",
+                        severity="medium",
                     )
                 )
             stance = (
@@ -204,7 +205,11 @@ class LocalAnalysisClient:
             emphasis_terms=[word for word in ("過去最大", "ついに", "異例") if word in title],
             omitted_conditions=[],
             body_alignment=0.65 if body else 0.3,
-            neutral_headlines={"事実中心": first[:70]},
+            neutral_headlines={
+                "fact_focused": first[:70],
+                "context_focused": f"{title}：背景と条件",
+                "cautious": f"{title}（本文で確認できる範囲）",
+            },
             uncertainty_notes=["ローカル特徴量による暫定分析"],
         )
 

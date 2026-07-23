@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from src.config.settings import Settings
 from src.domain.models import EMOTIONS, Article, Comment, CommentAnalysis
+from src.llm.schemas import CommentBatchResponse, FramingResponse
 from src.storage.cache import build_cache_key
 
 
@@ -41,3 +42,20 @@ def test_default_emotions_are_valid() -> None:
     analysis = CommentAnalysis(comment_id="c", cleaned_text="x")
     assert set(analysis.emotion_scores) == set(EMOTIONS)
 
+
+def test_openai_output_schemas_are_strict_and_fully_required() -> None:
+    def validate(value: object) -> None:
+        if isinstance(value, dict):
+            if value.get("type") == "object":
+                properties = value.get("properties")
+                assert isinstance(properties, dict)
+                assert value.get("additionalProperties") is False
+                assert set(value.get("required", [])) == set(properties)
+            for nested in value.values():
+                validate(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                validate(nested)
+
+    validate(CommentBatchResponse.model_json_schema())
+    validate(FramingResponse.model_json_schema())

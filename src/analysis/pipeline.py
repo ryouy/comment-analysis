@@ -198,7 +198,8 @@ class AnalysisPipeline:
                 item = self.fallback_llm.analyze_comments(
                     article.title, article.body, [comment]
                 ).items[0]
-            dominant = max(EMOTIONS, key=lambda name: item.emotion_scores[name])
+            emotion_scores = item.emotion_scores.model_dump()
+            dominant = max(EMOTIONS, key=lambda name: emotion_scores[name])
             information_density = min(1.0, len(set(tokenize(text))) / 18)
             analyses.append(
                 CommentAnalysis(
@@ -208,7 +209,7 @@ class AnalysisPipeline:
                     embedding=embedding,
                     stance_label=item.stance_label,
                     stance_confidence=item.stance_confidence,
-                    emotion_scores=item.emotion_scores,
+                    emotion_scores=emotion_scores,
                     dominant_emotion=dominant,
                     claim=item.claim,
                     reasons=item.reasons,

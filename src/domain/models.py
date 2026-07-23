@@ -65,10 +65,10 @@ class SentenceLink(StrictModel):
 class RhetoricFlag(StrictModel):
     label: str
     probability: float = Field(ge=0, le=1)
-    evidence_span: str | None = None
+    evidence_span: str | None
     explanation: str
-    uncertainty: str | None = None
-    severity: str = "medium"
+    uncertainty: str | None
+    severity: str
 
 
 class CommentAnalysis(StrictModel):
