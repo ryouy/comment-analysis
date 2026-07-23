@@ -16,6 +16,11 @@ from bs4 import BeautifulSoup, Tag
 
 from src.config.settings import Settings
 from src.domain.models import Article, Comment
+from src.ingestion.yahoo_selenium import (
+    SeleniumYahooCommentProvider,
+    YahooCommentFetchError,
+    YahooCommentProvider,
+)
 from src.preprocessing.text import clean_text
 
 
@@ -308,10 +313,16 @@ def extract_public_page(html: str, url: str) -> WebIngestionResult:
 
 class WebIngestionService:
     def __init__(
-        self, settings: Settings, http_client: SafeHttpClient | None = None
+        self,
+        settings: Settings,
+        http_client: SafeHttpClient | None = None,
+        yahoo_comment_provider: YahooCommentProvider | None = None,
     ) -> None:
         self.settings = settings
         self.http = http_client or SafeHttpClient(settings)
+        self.yahoo_comments = yahoo_comment_provider
+        if self.yahoo_comments is None and settings.yahoo_comment_fetch_enabled:
+            self.yahoo_comments = SeleniumYahooCommentProvider(settings)
 
     def _robots_parser(self, url: str) -> RobotFileParser:
         robots_url = _robots_url(url)
@@ -326,7 +337,7 @@ class WebIngestionService:
         parser.parse(robots_text.splitlines())
         return parser
 
-    def fetch(self, url: str) -> WebIngestionResult:
+    def fetch(self, url: str, comment_limit: int | None = None) -> WebIngestionResult:
         normalized = normalize_public_url(url)
         parser = self._robots_parser(normalized)
         if not parser.can_fetch(self.settings.web_fetch_user_agent, normalized):
@@ -337,4 +348,30 @@ class WebIngestionService:
             parser = self._robots_parser(final_url)
         if not parser.can_fetch(self.settings.web_fetch_user_agent, final_url):
             raise WebIngestionError("リダイレクト先の自動取得が許可されていません。")
-        return extract_public_page(html, final_url)
+        result = extract_public_page(html, final_url)
+        host = (urlsplit(final_url).hostname or "").lower()
+        if host == "news.yahoo.co.jp" and self.yahoo_comments is not None:
+            try:
+                comments = self.yahoo_comments.fetch(
+                    result.article,
+                    comment_limit or self.settings.analysis_max_comments,
+                )
+                warnings = [
+                    warning
+                    for warning in result.warnings
+                    if not warning.startswith("公開記事HTMLにコメントが含まれていません")
+                ]
+                if not comments:
+                    warnings.append("Yahooコメントは0件でした。")
+                return WebIngestionResult(
+                    article=result.article,
+                    comments=comments,
+                    warnings=warnings,
+                )
+            except YahooCommentFetchError as exc:
+                return WebIngestionResult(
+                    article=result.article,
+                    comments=result.comments,
+                    warnings=[*result.warnings, str(exc)],
+                )
+        return result

@@ -13,6 +13,7 @@ dependencies = [
   "pydantic>=2.7,<3",
   "requests>=2.31,<3",
   "scikit-learn>=1.4,<1.7",
+  "selenium>=4.20,<5",
   "scipy>=1.11,<1.15",
   "streamlit>=1.35,<2",
   "tenacity>=8.2,<10",

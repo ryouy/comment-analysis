@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import socket
+from datetime import datetime
 
 import pytest
 
 from src.config.settings import Settings
+from src.domain.models import Article, Comment
 from src.ingestion.web_loader import (
     WebIngestionError,
     WebIngestionService,
     extract_public_page,
     normalize_public_url,
+)
+from src.ingestion.yahoo_selenium import (
+    _comment_id_from_params,
+    _comments_url,
+    _integer,
+    _parse_yahoo_datetime,
 )
 
 ARTICLE_BODY = (
@@ -83,3 +91,63 @@ def test_service_respects_robots_txt(monkeypatch: pytest.MonkeyPatch) -> None:
     service = WebIngestionService(Settings(), http_client=FakeHttp())  # type: ignore[arg-type]
     with pytest.raises(WebIngestionError, match="robots.txt"):
         service.fetch("https://example.com/private/article")
+
+
+def test_yahoo_comment_helpers_parse_current_values() -> None:
+    reference = datetime.fromisoformat("2026-06-01T16:00:00+09:00")
+    assert _integer("共感した\n1,234") == 1234
+    assert (
+        _comment_id_from_params("_cl_link:agbtn1;cmt_id:comment-123;")
+        == "comment-123"
+    )
+    assert _parse_yahoo_datetime("6/2(火) 18:11", reference) == datetime.fromisoformat(
+        "2026-06-02T18:11:00+09:00"
+    )
+    assert _comments_url("https://news.yahoo.co.jp/articles/abc", 3).endswith(
+        "/articles/abc/comments?page=3"
+    )
+
+
+class AllowingFakeHttp:
+    def get_text(self, url: str, *, check_html: bool = True) -> tuple[str, str]:
+        del check_html
+        if url.endswith("/robots.txt"):
+            return "User-agent: *\nAllow: /", url
+        return ARTICLE_HTML, url
+
+
+class FakeYahooComments:
+    def fetch(self, article: Article, limit: int) -> list[Comment]:
+        assert limit == 50
+        return [
+            Comment(
+                comment_id="y1",
+                article_id=article.article_id,
+                text="URLから取得したコメント",
+                order_index=0,
+            )
+        ]
+
+
+def test_service_merges_authorized_yahoo_comments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("183.79.250.251", 443))
+        ],
+    )
+    service = WebIngestionService(
+        Settings(),
+        http_client=AllowingFakeHttp(),  # type: ignore[arg-type]
+        yahoo_comment_provider=FakeYahooComments(),
+    )
+    result = service.fetch(
+        "https://news.yahoo.co.jp/articles/example",
+        comment_limit=50,
+    )
+    assert [comment.text for comment in result.comments] == [
+        "URLから取得したコメント"
+    ]

@@ -105,6 +105,11 @@ def render_start(settings: Settings) -> None:
             "記事URL",
             placeholder="https://news.yahoo.co.jp/articles/...",
         )
+        comment_limit = st.select_slider(
+            "コメント取得上限",
+            options=[50, 100, 200, 500, 1000],
+            value=200,
+        )
         fetch = st.button("記事とコメントを取得", type="primary")
         if fetch:
             if not url:
@@ -112,7 +117,9 @@ def render_start(settings: Settings) -> None:
                 return
             try:
                 with st.spinner("公開ページを取得しています…"):
-                    result = WebIngestionService(settings).fetch(url)
+                    result = WebIngestionService(settings).fetch(
+                        url, comment_limit=comment_limit
+                    )
                 st.session_state["web_dataset"] = {
                     "url": url,
                     "article": result.article.model_dump(mode="json"),

@@ -35,6 +35,12 @@ class Settings:
     web_fetch_timeout_seconds: float = 15
     web_fetch_max_bytes: int = 5_000_000
     web_fetch_user_agent: str = "CommentAnalysis/1.0"
+    yahoo_comment_fetch_enabled: bool = True
+    yahoo_comment_fetch_max_pages: int = 50
+    yahoo_comment_fetch_replies: bool = True
+    selenium_page_timeout_seconds: float = 20
+    selenium_chrome_binary: str | None = None
+    selenium_driver_path: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -78,6 +84,20 @@ class Settings:
             web_fetch_user_agent=os.getenv(
                 "WEB_FETCH_USER_AGENT", "CommentAnalysis/1.0"
             ),
+            yahoo_comment_fetch_enabled=_bool(
+                "YAHOO_COMMENT_FETCH_ENABLED", True
+            ),
+            yahoo_comment_fetch_max_pages=int(
+                os.getenv("YAHOO_COMMENT_FETCH_MAX_PAGES", "50")
+            ),
+            yahoo_comment_fetch_replies=_bool(
+                "YAHOO_COMMENT_FETCH_REPLIES", True
+            ),
+            selenium_page_timeout_seconds=float(
+                os.getenv("SELENIUM_PAGE_TIMEOUT_SECONDS", "20")
+            ),
+            selenium_chrome_binary=os.getenv("SELENIUM_CHROME_BINARY") or None,
+            selenium_driver_path=os.getenv("SELENIUM_DRIVER_PATH") or None,
         )
 
     def snapshot(self) -> dict[str, Any]:
