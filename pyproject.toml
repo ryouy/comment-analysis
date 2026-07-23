@@ -17,6 +17,7 @@ dependencies = [
   "scipy>=1.11,<1.15",
   "streamlit>=1.35,<2",
   "tenacity>=8.2,<10",
+  "threadpoolctl>=3.2,<4",
 ]
 
 [project.optional-dependencies]

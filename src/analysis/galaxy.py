@@ -8,6 +8,7 @@ import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
+from threadpoolctl import threadpool_limits
 
 from src.config.settings import Settings
 from src.domain.models import Comment, CommentAnalysis
@@ -30,7 +31,10 @@ def _cluster(vectors: np.ndarray, settings: Settings) -> tuple[np.ndarray, str]:
     best_labels = np.zeros(count, dtype=int)
     best_score = -1.0
     for clusters in range(2, min(8, count - 1) + 1):
-        labels = KMeans(n_clusters=clusters, random_state=42, n_init=10).fit_predict(vectors)
+        with threadpool_limits(limits=1):
+            labels = KMeans(
+                n_clusters=clusters, random_state=42, n_init=3
+            ).fit_predict(vectors)
         if len(set(labels)) < 2:
             continue
         score = float(silhouette_score(vectors, labels))
@@ -58,10 +62,14 @@ def build_galaxy(
             coordinates = reducer.fit_transform(vectors)
             reducer_name = "UMAP"
         except ImportError:
-            coordinates = PCA(n_components=2, random_state=42).fit_transform(vectors)
+            with threadpool_limits(limits=1):
+                coordinates = PCA(n_components=2, random_state=42).fit_transform(
+                    vectors
+                )
             reducer_name = "PCA fallback"
     else:
-        coordinates = PCA(n_components=2, random_state=42).fit_transform(vectors)
+        with threadpool_limits(limits=1):
+            coordinates = PCA(n_components=2, random_state=42).fit_transform(vectors)
         reducer_name = "PCA"
     labels, clusterer_name = _cluster(vectors, settings)
     counts = Counter(int(label) for label in labels)
@@ -102,4 +110,3 @@ def build_galaxy(
         "clusterer": clusterer_name,
         "points": points,
     }
-

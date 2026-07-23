@@ -26,6 +26,19 @@ from src.ui.views import (
 SAMPLE_PATH = Path(__file__).parent / "data" / "sample_article.json"
 
 
+@st.cache_data(ttl=900, max_entries=20, show_spinner=False)
+def _fetch_url_dataset(url: str, comment_limit: int) -> dict[str, Any]:
+    result = WebIngestionService(Settings.from_env()).fetch(
+        url, comment_limit=comment_limit
+    )
+    return {
+        "url": url,
+        "article": result.article.model_dump(mode="json"),
+        "comments": [item.model_dump(mode="json") for item in result.comments],
+        "warnings": result.warnings,
+    }
+
+
 def _progress_callback(bar: Any, label: Any) -> Callable[[str, float], None]:
     def update(message: str, value: float) -> None:
         label.write(message)
@@ -108,7 +121,7 @@ def render_start(settings: Settings) -> None:
         comment_limit = st.select_slider(
             "コメント取得上限",
             options=[50, 100, 200, 500, 1000],
-            value=200,
+            value=50,
         )
         fetch = st.button("記事とコメントを取得", type="primary")
         if fetch:
@@ -117,19 +130,10 @@ def render_start(settings: Settings) -> None:
                 return
             try:
                 with st.spinner("公開ページを取得しています…"):
-                    result = WebIngestionService(settings).fetch(
-                        url, comment_limit=comment_limit
-                    )
-                st.session_state["web_dataset"] = {
-                    "url": url,
-                    "article": result.article.model_dump(mode="json"),
-                    "comments": [
-                        item.model_dump(mode="json") for item in result.comments
-                    ],
-                    "warnings": result.warnings,
-                }
+                    dataset = _fetch_url_dataset(url, comment_limit)
+                st.session_state["web_dataset"] = dataset
                 st.success(
-                    f"本文と{len(result.comments)}件のコメントを取得しました。"
+                    f"本文と{len(dataset['comments'])}件のコメントを取得しました。"
                 )
             except WebIngestionError as exc:
                 st.error(str(exc))
