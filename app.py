@@ -14,6 +14,7 @@ from src.analysis.pipeline import AnalysisPipeline
 from src.config.settings import Settings
 from src.domain.models import AnalysisBundle, Article, Comment
 from src.ingestion.normalized_loader import load_dataset, parse_dataset
+from src.ingestion.web_loader import WebIngestionError, WebIngestionService
 from src.ui.views import (
     render_emotion,
     render_notice,
@@ -82,17 +83,58 @@ def _csv_comments(
 def render_start(settings: Settings) -> None:
     st.header("分析開始")
     st.write(
-        "許可されたAPIやユーザー提供データだけを対象にします。"
-        "このアプリはYahoo!ニュースを含む外部サイトのスクレイピングを行いません。"
+        "ニュースURLを入力すると、取得が許可された公開ページから本文と"
+        "HTML内の公開コメントを読み込みます。"
     )
     source = st.radio(
         "入力方法",
-        ["同梱サンプル", "正規化JSON", "コメントCSV＋手動本文", "手動入力"],
+        [
+            "ニュースURL",
+            "同梱サンプル",
+            "正規化JSON",
+            "コメントCSV＋手動本文",
+            "手動入力",
+        ],
         horizontal=True,
     )
     article: Article
     comments: list[Comment]
-    if source == "同梱サンプル":
+    ingestion_warnings: list[str] = []
+    if source == "ニュースURL":
+        url = st.text_input(
+            "記事URL",
+            placeholder="https://news.yahoo.co.jp/articles/...",
+        )
+        fetch = st.button("記事とコメントを取得", type="primary")
+        if fetch:
+            if not url:
+                st.warning("記事URLを入力してください。")
+                return
+            try:
+                with st.spinner("公開ページを取得しています…"):
+                    result = WebIngestionService(settings).fetch(url)
+                st.session_state["web_dataset"] = {
+                    "url": url,
+                    "article": result.article.model_dump(mode="json"),
+                    "comments": [
+                        item.model_dump(mode="json") for item in result.comments
+                    ],
+                    "warnings": result.warnings,
+                }
+                st.success(
+                    f"本文と{len(result.comments)}件のコメントを取得しました。"
+                )
+            except WebIngestionError as exc:
+                st.error(str(exc))
+                return
+        stored = st.session_state.get("web_dataset")
+        if not stored or stored.get("url") != url:
+            st.info("URLを入力し、「記事とコメントを取得」を押してください。")
+            return
+        article = Article.model_validate(stored["article"])
+        comments = [Comment.model_validate(item) for item in stored["comments"]]
+        ingestion_warnings = list(stored.get("warnings", []))
+    elif source == "同梱サンプル":
         article, comments = load_dataset(SAMPLE_PATH)
     elif source == "正規化JSON":
         uploaded = st.file_uploader("ArticleとCommentを含むJSON", type=["json"])
@@ -150,6 +192,8 @@ def render_start(settings: Settings) -> None:
         "full": settings.analysis_max_comments,
     }[mode]
     comments = comments[:mode_limit]
+    for warning in ingestion_warnings:
+        st.warning(warning)
     left, right, third = st.columns(3)
     left.metric("コメント件数", len(comments))
     right.metric(

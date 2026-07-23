@@ -32,6 +32,9 @@ class Settings:
     cache_dir: Path = Path(".cache")
     store_raw_comments: bool = False
     anonymize_display_names: bool = True
+    web_fetch_timeout_seconds: float = 15
+    web_fetch_max_bytes: int = 5_000_000
+    web_fetch_user_agent: str = "CommentAnalysis/1.0"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -68,6 +71,13 @@ class Settings:
             cache_dir=Path(os.getenv("ANALYSIS_CACHE_DIR", ".cache")),
             store_raw_comments=_bool("STORE_RAW_COMMENTS", False),
             anonymize_display_names=_bool("ANONYMIZE_DISPLAY_NAMES", True),
+            web_fetch_timeout_seconds=float(
+                os.getenv("WEB_FETCH_TIMEOUT_SECONDS", "15")
+            ),
+            web_fetch_max_bytes=int(os.getenv("WEB_FETCH_MAX_BYTES", "5000000")),
+            web_fetch_user_agent=os.getenv(
+                "WEB_FETCH_USER_AGENT", "CommentAnalysis/1.0"
+            ),
         )
 
     def snapshot(self) -> dict[str, Any]:
@@ -75,4 +85,3 @@ class Settings:
         values["cache_dir"] = str(self.cache_dir)
         values["openai_api_key"] = bool(self.openai_api_key)
         return values
-
