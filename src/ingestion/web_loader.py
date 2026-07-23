@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import re
 import socket
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -22,6 +23,17 @@ from src.ingestion.yahoo_selenium import (
     YahooCommentProvider,
 )
 from src.preprocessing.text import clean_text
+
+RELATED_HEADING_RE = re.compile(
+    r"(?:^|\n)\s*(?:【\s*)?"
+    r"(?:関連記事|関連ニュース|あわせて読みたい|こちらもおすすめ|おすすめの記事)"
+    r"(?:\s*】)?(?:\s|$)",
+    re.IGNORECASE,
+)
+NON_ARTICLE_ATTRIBUTE_RE = re.compile(
+    r"related|recommend|ranking|breadcrumb|share|関連記事|おすすめ",
+    re.IGNORECASE,
+)
 
 
 class WebIngestionError(ValueError):
@@ -151,19 +163,77 @@ def _first_text(soup: BeautifulSoup, selectors: list[str]) -> str | None:
     return None
 
 
+def _without_related_tail(value: str) -> str:
+    """構造化本文の末尾に付加された関連記事一覧を除く。"""
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    match = RELATED_HEADING_RE.search(normalized)
+    if match:
+        normalized = normalized[: match.start()]
+    return clean_text(normalized)
+
+
+def _is_article_paragraph(node: Tag, container: Tag) -> bool:
+    for parent in node.parents:
+        if not isinstance(parent, Tag):
+            continue
+        raw_classes = parent.get("class")
+        classes = (
+            " ".join(str(value) for value in raw_classes)
+            if isinstance(raw_classes, list)
+            else str(raw_classes or "")
+        )
+        attributes = " ".join(
+            [
+                str(parent.get("id", "")),
+                classes,
+                str(parent.get("aria-label", "")),
+            ]
+        )
+        if (
+            parent.name in {"nav", "aside", "footer"}
+            or parent.get("role") in {"navigation", "complementary"}
+            or NON_ARTICLE_ATTRIBUTE_RE.search(attributes)
+        ):
+            return False
+        if parent is container:
+            break
+    text = clean_text(node.get_text(" "))
+    if len(text) < 15 or RELATED_HEADING_RE.match(text):
+        return False
+    link_text = clean_text(" ".join(link.get_text(" ") for link in node.select("a")))
+    # 本文中の出典リンクなどは残し、文字の大半がリンクである見出しだけを除く。
+    if link_text and len(link_text) / max(len(text), 1) >= 0.5:
+        return False
+    return node is container or container in node.parents
+
+
+def _body_from_node(node: Tag) -> str:
+    paragraphs = [
+        clean_text(paragraph.get_text(" "))
+        for paragraph in node.select("p")
+        if isinstance(paragraph, Tag) and _is_article_paragraph(paragraph, node)
+    ]
+    return "\n".join(paragraphs)
+
+
 def _article_body(soup: BeautifulSoup, documents: list[Any]) -> str:
     for document in documents:
         for item in _walk_json(document):
             kind = item.get("@type")
             if kind in {"Article", "NewsArticle", "ReportageNewsArticle"}:
                 body = item.get("articleBody")
-                if isinstance(body, str) and len(clean_text(body)) >= 50:
-                    return clean_text(body)
+                if isinstance(body, str):
+                    cleaned_body = _without_related_tail(body)
+                    if len(cleaned_body) >= 50:
+                        return cleaned_body
     selectors = [
         "[itemprop='articleBody']",
-        "article",
+        "[data-article-body]",
         ".article_body",
+        ".articleBody",
         "[class*='ArticleBody']",
+        "[class*='ArticleContent']",
+        "article",
         "main",
     ]
     candidates = []
@@ -171,8 +241,7 @@ def _article_body(soup: BeautifulSoup, documents: list[Any]) -> str:
         for node in soup.select(selector):
             if not isinstance(node, Tag):
                 continue
-            paragraphs = [clean_text(item.get_text(" ")) for item in node.select("p")]
-            text = "\n".join(item for item in paragraphs if len(item) >= 15)
+            text = _body_from_node(node)
             if len(text) >= 50:
                 candidates.append(text)
     if not candidates:

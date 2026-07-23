@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import socket
 from datetime import datetime
 
@@ -63,6 +64,47 @@ def test_extract_public_page_uses_structured_article_and_comments() -> None:
     assert result.comments[0].text == "電話予約にも対応してほしい。"
     assert result.comments[0].empathy_count == 12
     assert "author" not in result.comments[0].model_dump()
+
+
+def test_extract_public_page_removes_related_links_from_dom_body() -> None:
+    html = """
+    <html><head><meta property="og:title" content="地域交通の計画"></head>
+    <body><main><article>
+      <div data-article-body>
+        <p>市は交通空白地域で予約制バスの実証運行を開始すると発表した。</p>
+        <p>計画の詳細は<a href="/source">市の資料</a>で公表され、期間は六か月を予定している。</p>
+        <section class="RelatedArticles">
+          <p><a href="/other">隣の市でも新しい交通サービスの運行が始まった</a></p>
+        </section>
+      </div>
+    </article></main></body></html>
+    """
+    result = extract_public_page(html, "https://example.com/news/2")
+    assert "予約制バス" in result.article.body
+    assert "市の資料" in result.article.body
+    assert "隣の市" not in result.article.body
+
+
+def test_extract_public_page_removes_related_tail_from_structured_body() -> None:
+    structured_body = (
+        "市は予約制バスの実証運行を開始すると発表した。"
+        "対象は交通空白地域の住民で、期間は六か月を予定している。"
+        "\n【関連記事】 隣の市でも新交通サービス"
+    )
+    html = f"""
+    <html><head>
+      <meta property="og:title" content="地域交通の計画">
+      <script type="application/ld+json">
+      {{
+        "@type": "NewsArticle",
+        "articleBody": {json.dumps(structured_body, ensure_ascii=False)}
+      }}
+      </script>
+    </head><body></body></html>
+    """
+    result = extract_public_page(html, "https://example.com/news/3")
+    assert "六か月" in result.article.body
+    assert "隣の市" not in result.article.body
 
 
 def test_normalize_public_url_rejects_local_addresses() -> None:
