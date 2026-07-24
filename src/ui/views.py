@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -18,31 +21,67 @@ EMOTION_LABELS = {
     "resignation": "諦め",
     "moral_outrage": "道徳的憤り",
 }
+JST = ZoneInfo("Asia/Tokyo")
+
+DIMENSION_LABELS = {
+    "specificity": "具体性",
+    "evidence": "根拠",
+    "originality": "独自性",
+    "logical_coherence": "論理性",
+    "relevance": "記事との関連",
+    "constructiveness": "建設性",
+    "respectfulness": "敬意",
+    "information_density": "情報量",
+}
 
 
 def _comment_map(bundle: AnalysisBundle) -> dict[str, str]:
     return {comment.comment_id: comment.text for comment in bundle.comments}
 
 
+def _format_posted_at(value: datetime | str | None) -> str:
+    if value is None:
+        return "投稿時刻なし"
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return str(value)
+    localized = value.replace(tzinfo=JST) if value.tzinfo is None else value.astimezone(JST)
+    return localized.strftime("%Y/%m/%d %H:%M")
+
+
 def evidence_comments(
-    bundle: AnalysisBundle, comment_ids: list[str], key: str, label: str = "根拠コメント"
+    bundle: AnalysisBundle,
+    comment_ids: list[str],
+    key: str,
+    label: str = "関連コメント",
 ) -> None:
     available = [item for item in comment_ids if item in _comment_map(bundle)]
     if not available:
         st.caption(f"{label}: 該当なし")
         return
-    selected = st.selectbox(label, available, key=key)
+    comments_by_id = {comment.comment_id: comment for comment in bundle.comments}
+    selected = st.selectbox(
+        label,
+        available,
+        key=key,
+        format_func=lambda comment_id: (
+            f"{_format_posted_at(comments_by_id[comment_id].posted_at)} ｜ "
+            f"{comments_by_id[comment_id].text[:64]}"
+        ),
+    )
     comment = next(item for item in bundle.comments if item.comment_id == selected)
     analysis = next(item for item in bundle.analyses if item.comment_id == selected)
     with st.container(border=True):
         st.write(comment.text)
         st.caption(
-            f"匿名コメント {selected} / 投稿順 {comment.order_index} / "
-            f"支配感情 {EMOTION_LABELS.get(analysis.dominant_emotion or '', '不明')}"
+            f"{_format_posted_at(comment.posted_at)} ・ 投稿順 {comment.order_index + 1} ・ "
+            f"主な感情: {EMOTION_LABELS.get(analysis.dominant_emotion or '', '不明')}"
         )
         if analysis.article_sentence_links:
             sentence_id = st.selectbox(
-                "関連本文へ",
+                "対応する記事本文",
                 [link.sentence_id for link in analysis.article_sentence_links],
                 key=f"{key}-sentence",
             )
@@ -51,12 +90,12 @@ def evidence_comments(
 
 
 def render_relation(bundle: AnalysisBundle) -> None:
-    st.header("本文との関係")
+    st.header("記事との関連")
     heatmap = bundle.features["trigger_heatmap"]
     rows = pd.DataFrame(heatmap["sentences"])
-    st.subheader("F02 本文トリガーヒートマップ")
+    st.subheader("本文への反応")
     mode = st.selectbox(
-        "表示モード",
+        "表示する指標",
         ["comment_count", "anger", "anxiety", "empathy"],
         format_func=lambda value: {
             "comment_count": "反応量",
@@ -75,7 +114,7 @@ def render_relation(bundle: AnalysisBundle) -> None:
         hide_index=True,
     )
     sentence_id = st.selectbox(
-        "本文文を選択して関連コメントを表示",
+        "記事本文を選ぶ",
         rows["sentence_id"],
         format_func=lambda value: next(
             item.text for item in bundle.sentences if item.sentence_id == value
@@ -84,14 +123,14 @@ def render_relation(bundle: AnalysisBundle) -> None:
     row = next(item for item in heatmap["sentences"] if item["sentence_id"] == sentence_id)
     evidence_comments(bundle, row["comment_ids"], "heatmap-comments")
     if heatmap["outside_comment_ids"]:
-        with st.expander("本文外論点"):
+        with st.expander("記事本文に直接対応しないコメント"):
             evidence_comments(
                 bundle, heatmap["outside_comment_ids"], "outside-comments"
             )
 
-    st.subheader("F05 認識ギャップ指数")
+    st.subheader("記事とコメントの認識差")
     gap = bundle.features["gap_index"]
-    st.metric("認識ギャップ指数", f"{gap['value']:.1f} / 100")
+    st.metric("認識差", f"{gap['value']:.1f} / 100")
     st.caption(f"信頼度 {gap['confidence'] * 100:.0f}%")
     if gap["warning"]:
         st.warning(gap["warning"])
@@ -105,13 +144,13 @@ def render_relation(bundle: AnalysisBundle) -> None:
         px.bar(component_frame, x="値", y="構成要素", orientation="h"),
         width="stretch",
     )
-    with st.expander("算出式と定義"):
+    with st.expander("計算方法"):
         st.code(
             "100 × (0.30×意味的不一致 + 0.25×本文外率 + 0.20×見出し依存率"
             " + 0.15×解釈衝突率 + 0.10×本文カバレッジ不足)"
         )
 
-    st.subheader("F12 論点脱線サンキー図")
+    st.subheader("論点の広がり")
     drift = bundle.features["topic_drift"]
     if drift["links"]:
         labels = {node["id"]: node["label"] for node in drift["nodes"]}
@@ -131,7 +170,7 @@ def render_relation(bundle: AnalysisBundle) -> None:
         )
         st.plotly_chart(fig, width="stretch")
         link_index = st.selectbox(
-            "流れを選択",
+            "関連を選ぶ",
             range(len(drift["links"])),
             format_func=lambda index: (
                 f"{drift['links'][index]['source']} → "
@@ -143,30 +182,38 @@ def render_relation(bundle: AnalysisBundle) -> None:
             bundle, drift["links"][link_index]["comment_ids"], "drift-comments"
         )
 
-    st.subheader("F15 見出しフレーミング研究室")
+    st.subheader("見出しの比較")
     framing = bundle.features["framing"]
-    st.write("元見出し:", framing["original_title"])
-    st.write("本文一致度:", f"{framing['body_alignment'] * 100:.0f}%")
-    st.write("感情・強調語:", framing["emotional_terms"] + framing["emphasis_terms"] or "なし")
-    st.caption("AIによる比較用見出し（元見出しより正しいとは限りません）")
+    st.write("元の見出し:", framing["original_title"])
+    st.write("記事本文との一致:", f"{framing['body_alignment'] * 100:.0f}%")
+    st.write("強調表現:", framing["emotional_terms"] + framing["emphasis_terms"] or "なし")
+    st.caption("記事本文を基にした比較案です。正解を示すものではありません。")
+    headline_labels = {
+        "fact_focused": "事実中心",
+        "context_focused": "背景を補足",
+        "cautious": "慎重な表現",
+    }
     st.table(
         pd.DataFrame(
-            [{"型": key, "見出し": value} for key, value in framing["neutral_headlines"].items()]
+            [
+                {"方針": headline_labels.get(key, key), "見出し": value}
+                for key, value in framing["neutral_headlines"].items()
+            ]
         )
     )
     evidence_comments(
         bundle,
         framing["dependent_comment_ids"],
         "framing-dependent",
-        "見出し依存推定の根拠コメント",
+        "見出しの影響が見られるコメント",
     )
     st.caption(framing["note"])
 
 
 def render_opinion(bundle: AnalysisBundle) -> None:
-    st.header("意見空間")
+    st.header("意見分布")
     galaxy = bundle.features["galaxy"]
-    st.subheader("F01 Opinion Galaxy")
+    st.subheader("コメントの分布")
     if galaxy["available"]:
         frame = pd.DataFrame(galaxy["points"])
         fig = px.scatter(
@@ -182,7 +229,7 @@ def render_opinion(bundle: AnalysisBundle) -> None:
         st.plotly_chart(fig, width="stretch")
         st.caption(f"{galaxy['reducer']} / {galaxy['clusterer']}（同一入力で再現可能）")
         evidence_comments(
-            bundle, frame["comment_id"].tolist(), "galaxy-comment", "点を選択"
+            bundle, frame["comment_id"].tolist(), "galaxy-comment", "コメントを選ぶ"
         )
     else:
         st.info(galaxy["reason"])
@@ -191,7 +238,7 @@ def render_opinion(bundle: AnalysisBundle) -> None:
         width="stretch",
     )
 
-    st.subheader("F07 少数意見発見器")
+    st.subheader("少数意見")
     minority = bundle.features["minority_signals"]
     if minority:
         st.dataframe(pd.DataFrame(minority), width="stretch", hide_index=True)
@@ -202,9 +249,9 @@ def render_opinion(bundle: AnalysisBundle) -> None:
             "少数意見の根拠",
         )
     else:
-        st.info("条件を満たす少数意見は検出されませんでした。無理な生成はしていません。")
+        st.info("該当する少数意見はありません。")
 
-    st.subheader("F13 セマンティック・フレーズ")
+    st.subheader("特徴的なフレーズ")
     phrases = bundle.features["semantic_cloud"]
     if phrases:
         phrase_frame = pd.DataFrame(phrases)
@@ -234,13 +281,13 @@ def render_opinion(bundle: AnalysisBundle) -> None:
 
 
 def render_emotion(bundle: AnalysisBundle) -> None:
-    st.header("感情・拡散")
+    st.header("感情の推移")
     timeline = bundle.features["emotion_timeline"]
-    st.subheader("F06 感情地震計")
+    st.subheader("感情の推移")
     st.info(
-        "実時間による推移です。"
+        "投稿時刻を基準に表示しています。"
         if timeline["axis_mode"] == "time"
-        else "実時間ではなく投稿順による推移です。"
+        else "投稿時刻が不足しているため、投稿順で表示しています。"
     )
     if timeline["bins"]:
         emotions = st.multiselect(
@@ -249,12 +296,19 @@ def render_emotion(bundle: AnalysisBundle) -> None:
             default=["anger", "anxiety", "empathy", "hope", "moral_outrage"],
             format_func=lambda name: EMOTION_LABELS[name],
         )
-        weighted = st.toggle("共感数で加重", value=False)
-        smoothed = st.toggle("指数移動平均で平滑化", value=True)
+        weighted = st.toggle("共感数を反映", value=False)
+        smoothed = st.toggle("推移をなめらかに表示", value=True)
         key = "weighted_mean" if weighted else "mean"
+        x_axis_label = (
+            "投稿時刻" if timeline["axis_mode"] == "time" else "投稿順"
+        )
         long_rows = [
             {
-                "位置": item["index"],
+                x_axis_label: (
+                    item["timestamp"]
+                    if timeline["axis_mode"] == "time"
+                    else item["end_order"] + 1
+                ),
                 "感情": EMOTION_LABELS[emotion],
                 "強度": item[key][emotion],
                 "コメント数": item["comment_count"],
@@ -268,21 +322,30 @@ def render_emotion(bundle: AnalysisBundle) -> None:
                 lambda series: series.ewm(span=3, adjust=False).mean()
             )
         fig = px.line(
-            timeline_frame, x="位置", y="強度", color="感情", markers=True
+            timeline_frame,
+            x=x_axis_label,
+            y="強度",
+            color="感情",
+            markers=True,
         )
         for point in timeline["change_points"]:
-            fig.add_vline(x=point["position"], line_dash="dash", line_color="#d62728")
+            marker_x = (
+                timeline["bins"][point["position"]]["timestamp"]
+                if timeline["axis_mode"] == "time"
+                else timeline["bins"][point["position"]]["end_order"] + 1
+            )
+            fig.add_vline(x=marker_x, line_dash="dash", line_color="#d62728")
         st.plotly_chart(fig, width="stretch")
         st.caption(
-            f"自動ビン幅: {timeline['window_size']}コメント / "
-            f"急変点: {len(timeline['change_points'])}件"
+            f"集計単位: {timeline['window_size']}コメント / "
+            f"変化が大きい箇所: {len(timeline['change_points'])}件"
         )
         if timeline["change_points"]:
             cp_index = st.selectbox(
-                "急変点",
+                "変化が大きい箇所",
                 range(len(timeline["change_points"])),
                 format_func=lambda index: (
-                    f"位置 {timeline['change_points'][index]['position']} / "
+                    f"{_format_posted_at(timeline['change_points'][index]['timestamp'])} / "
                     f"変化量 {timeline['change_points'][index]['magnitude']:.2f}"
                 ),
             )
@@ -307,13 +370,13 @@ def render_emotion(bundle: AnalysisBundle) -> None:
                 bundle,
                 point["representative_comment_ids"],
                 "change-point-comments",
-                "急変付近の代表コメント",
+                "この付近のコメント",
             )
         else:
-            st.info("設定感度で急変点は検出されませんでした。")
+            st.info("大きな変化は見つかりませんでした。")
         st.caption(timeline["note"])
 
-    st.subheader("F08 同調・言い換え拡散マップ")
+    st.subheader("類似コメントの広がり")
     propagation = bundle.features["propagation"]
     st.metric("完全重複率", f"{propagation['duplicate_rate'] * 100:.1f}%")
     st.metric("言い換え率", f"{propagation['paraphrase_rate'] * 100:.1f}%")
@@ -377,8 +440,8 @@ def render_emotion(bundle: AnalysisBundle) -> None:
 
 
 def render_quality(bundle: AnalysisBundle) -> None:
-    st.header("議論品質")
-    st.subheader("F14 分断・健全性ダッシュボード")
+    st.header("コメント品質")
+    st.subheader("全体指標")
     health = bundle.features["health"]
     health_frame = pd.DataFrame(
         [{"指標": key, "値": value} for key, value in health["metrics"].items()]
@@ -395,7 +458,7 @@ def render_quality(bundle: AnalysisBundle) -> None:
             "敬意=攻撃表現の少なさ、少数意見可視性=小規模意見群の比率、橋渡し率=中間密度です。"
         )
 
-    st.subheader("F09 コメント品質フロンティア")
+    st.subheader("コメントごとの品質")
     quality = pd.DataFrame(bundle.features["quality_frontier"])
     dimensions = [
         "specificity",
@@ -408,8 +471,12 @@ def render_quality(bundle: AnalysisBundle) -> None:
         "information_density",
     ]
     left, right = st.columns(2)
-    x_axis = left.selectbox("X軸", dimensions, index=1)
-    y_axis = right.selectbox("Y軸", dimensions, index=2)
+    x_axis = left.selectbox(
+        "横軸", dimensions, index=1, format_func=lambda value: DIMENSION_LABELS[value]
+    )
+    y_axis = right.selectbox(
+        "縦軸", dimensions, index=2, format_func=lambda value: DIMENSION_LABELS[value]
+    )
     if not quality.empty:
         st.plotly_chart(
             px.scatter(
@@ -423,11 +490,11 @@ def render_quality(bundle: AnalysisBundle) -> None:
             width="stretch",
         )
         evidence_comments(
-            bundle, quality["comment_id"].tolist(), "quality-comments", "点を選択"
+            bundle, quality["comment_id"].tolist(), "quality-comments", "コメントを選ぶ"
         )
     st.caption("共感数は点サイズにのみ使用し、品質スコアとは区別しています。")
 
-    st.subheader("F10 レトリック・認知バイアスレンズ")
+    st.subheader("表現上の特徴")
     rhetoric = bundle.features["rhetoric_lens"]
     threshold = st.slider("表示確率の下限", 0.60, 1.00, 0.60, 0.05)
     visible = [

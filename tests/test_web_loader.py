@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -144,6 +144,13 @@ def test_yahoo_comment_helpers_parse_current_values() -> None:
     )
     assert _parse_yahoo_datetime("6/2(火) 18:11", reference) == datetime.fromisoformat(
         "2026-06-02T18:11:00+09:00"
+    )
+    assert _parse_yahoo_datetime(
+        "2026-06-02T18:11:00+09:00", reference
+    ) == datetime.fromisoformat("2026-06-02T18:11:00+09:00")
+    now = datetime.fromisoformat("2026-06-02T19:00:00+09:00")
+    assert _parse_yahoo_datetime("15分前", reference, now) == now - timedelta(
+        minutes=15
     )
     assert _comments_url("https://news.yahoo.co.jp/articles/abc", 3).endswith(
         "/articles/abc/comments?page=3"

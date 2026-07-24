@@ -5,7 +5,7 @@ import math
 import re
 import shutil
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from typing import Protocol
 from urllib.parse import urlsplit, urlunsplit
@@ -52,20 +52,74 @@ def _comment_id_from_params(params: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _parse_yahoo_datetime(text: str, reference: datetime | None) -> datetime | None:
-    match = re.search(r"(\d{1,2})/(\d{1,2}).*?(\d{1,2}):(\d{2})", text)
+def _parse_yahoo_datetime(
+    text: str,
+    reference: datetime | None,
+    now: datetime | None = None,
+) -> datetime | None:
+    value_text = clean_text(text)
+    if not value_text:
+        return None
+    try:
+        iso_value = datetime.fromisoformat(value_text.replace("Z", "+00:00"))
+        return iso_value.replace(tzinfo=JST) if iso_value.tzinfo is None else iso_value
+    except ValueError:
+        pass
+    current = now or datetime.now(JST)
+    relative = re.search(r"(\d+)\s*(分|時間|日)前", value_text)
+    if relative:
+        amount = int(relative.group(1))
+        unit = relative.group(2)
+        delta = {
+            "分": timedelta(minutes=amount),
+            "時間": timedelta(hours=amount),
+            "日": timedelta(days=amount),
+        }[unit]
+        return current - delta
+    if "たった今" in value_text:
+        return current
+    match = re.search(
+        r"(?:(\d{4})[/-])?(\d{1,2})/(\d{1,2}).*?(\d{1,2}):(\d{2})",
+        value_text,
+    )
     if not match:
         return None
-    month, day, hour, minute = (int(value) for value in match.groups())
-    now = datetime.now(JST)
-    year = reference.astimezone(JST).year if reference else now.year
+    year_text, month_text, day_text, hour_text, minute_text = match.groups()
+    month, day, hour, minute = map(
+        int, (month_text, day_text, hour_text, minute_text)
+    )
+    year = (
+        int(year_text)
+        if year_text
+        else reference.astimezone(JST).year
+        if reference and reference.tzinfo
+        else reference.year
+        if reference
+        else current.year
+    )
     try:
         value = datetime(year, month, day, hour, minute, tzinfo=JST)
     except ValueError:
         return None
-    if reference is None and value > now.replace(microsecond=0):
+    if reference is None and not year_text and value > current.replace(microsecond=0):
         value = value.replace(year=year - 1)
     return value
+
+
+def _posted_at(
+    elements: list[WebElement],
+    reference: datetime | None,
+) -> datetime | None:
+    for element in elements:
+        for candidate in (
+            element.get_attribute("datetime"),
+            element.get_attribute("title"),
+            element.text,
+        ):
+            parsed = _parse_yahoo_datetime(candidate or "", reference)
+            if parsed is not None:
+                return parsed
+    return None
 
 
 def _comments_url(article_url: str, page: int) -> str:
@@ -181,13 +235,14 @@ class SeleniumYahooCommentProvider:
             reply_button = self._element_by_params(comment_element, "cmt_usr", "opnre")
             empathy_count = _integer(empathy_button.text) if empathy_button else None
             reply_count = _integer(reply_button.text) if reply_button else 0
+            time_elements = comment_element.find_elements(By.CSS_SELECTOR, "time")
             return (
                 Comment(
                     comment_id=comment_id,
                     article_id=article.article_id,
                     text=text,
-                    posted_at=_parse_yahoo_datetime(
-                        time_link.text, article.published_at
+                    posted_at=_posted_at(
+                        [time_link, *time_elements], article.published_at
                     ),
                     order_index=order_index,
                     empathy_count=empathy_count,
@@ -226,10 +281,7 @@ class SeleniumYahooCommentProvider:
                         comment_id=comment_id,
                         article_id=article.article_id,
                         text=text,
-                        posted_at=_parse_yahoo_datetime(
-                            time_elements[0].text if time_elements else "",
-                            article.published_at,
-                        ),
+                        posted_at=_posted_at(time_elements, article.published_at),
                         order_index=start_index + len(comments),
                         empathy_count=_integer(reference_button.text)
                         if reference_button
@@ -274,10 +326,7 @@ class SeleniumYahooCommentProvider:
                         comment_id=comment_id,
                         article_id=parent.article_id,
                         text=text,
-                        posted_at=_parse_yahoo_datetime(
-                            time_elements[0].text if time_elements else "",
-                            parent.posted_at,
-                        ),
+                        posted_at=_posted_at(time_elements, parent.posted_at),
                         order_index=start_index + len(comments),
                         empathy_count=_integer(empathy_button.text)
                         if empathy_button

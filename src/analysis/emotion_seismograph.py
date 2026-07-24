@@ -47,6 +47,9 @@ def build_emotion_timeline(
                 "index": len(bins),
                 "start_order": chunk[0][0].order_index,
                 "end_order": chunk[-1][0].order_index,
+                "start_timestamp": chunk[0][0].posted_at.isoformat()
+                if chunk[0][0].posted_at
+                else None,
                 "timestamp": chunk[-1][0].posted_at.isoformat()
                 if chunk[-1][0].posted_at
                 else None,
@@ -89,9 +92,11 @@ def build_emotion_timeline(
             changes.append(
                 EmotionChangePoint(
                     position=int(position + 1),
-                    timestamp=comments[
-                        min(len(comments) - 1, bins[position + 1]["start_order"])
-                    ].posted_at,
+                    timestamp=datetime.fromisoformat(
+                        bins[position + 1]["start_timestamp"]
+                    )
+                    if bins[position + 1]["start_timestamp"]
+                    else None,
                     order_index=bins[position + 1]["start_order"],
                     magnitude=float(deltas[position]),
                     affected_emotions=affected,

@@ -20,10 +20,13 @@ SAMPLE_PATH = Path(__file__).parent / "data" / "sample_article.json"
 
 @st.cache_data(ttl=900, max_entries=20, show_spinner=False)
 def _fetch_url_dataset(url: str, comment_limit: int) -> dict[str, Any]:
+    # 取得仕様を変えた際に、旧形式のURLキャッシュを再利用しないための世代番号。
+    ingestion_cache_version = "2"
     result = WebIngestionService(Settings.from_env()).fetch(
         url, comment_limit=comment_limit
     )
     return {
+        "ingestion_cache_version": ingestion_cache_version,
         "url": url,
         "article": result.article.model_dump(mode="json"),
         "comments": [item.model_dump(mode="json") for item in result.comments],
@@ -86,18 +89,18 @@ def _csv_comments(
 
 
 def render_start(settings: Settings) -> None:
-    st.header("分析開始")
+    st.header("データを選ぶ")
     st.write(
-        "ニュースURLを入力すると、取得が許可された公開ページから本文と"
-        "HTML内の公開コメントを読み込みます。"
+        "記事URLから本文と公開コメントを読み込みます。"
+        "ファイルのアップロードや手動入力にも対応しています。"
     )
     source = st.radio(
         "入力方法",
         [
-            "ニュースURL",
-            "同梱サンプル",
-            "正規化JSON",
-            "コメントCSV＋手動本文",
+            "URLから取得",
+            "サンプル",
+            "JSONアップロード",
+            "CSVアップロード",
             "手動入力",
         ],
         horizontal=True,
@@ -105,51 +108,55 @@ def render_start(settings: Settings) -> None:
     article: Article
     comments: list[Comment]
     ingestion_warnings: list[str] = []
-    if source == "ニュースURL":
+    if source == "URLから取得":
         url = st.text_input(
             "記事URL",
             placeholder="https://news.yahoo.co.jp/articles/...",
         )
         comment_limit = st.select_slider(
-            "コメント取得上限",
+            "取得するコメント数",
             options=[50, 100, 200, 500, 1000],
             value=50,
         )
-        fetch = st.button("記事とコメントを取得", type="primary")
+        fetch = st.button("読み込む", type="primary")
         if fetch:
             if not url:
                 st.warning("記事URLを入力してください。")
                 return
             try:
-                with st.spinner("公開ページを取得しています…"):
+                with st.spinner("記事とコメントを読み込んでいます…"):
                     dataset = _fetch_url_dataset(url, comment_limit)
                 st.session_state["web_dataset"] = dataset
+                timestamp_count = sum(
+                    item.get("posted_at") is not None for item in dataset["comments"]
+                )
                 st.success(
-                    f"本文と{len(dataset['comments'])}件のコメントを取得しました。"
+                    f"コメント{len(dataset['comments'])}件を読み込みました。"
+                    f"投稿時刻は{timestamp_count}件で取得できました。"
                 )
             except WebIngestionError as exc:
                 st.error(str(exc))
                 return
         stored = st.session_state.get("web_dataset")
         if not stored or stored.get("url") != url:
-            st.info("URLを入力し、「記事とコメントを取得」を押してください。")
+            st.info("記事URLを入力して「読み込む」を押してください。")
             return
         article = Article.model_validate(stored["article"])
         comments = [Comment.model_validate(item) for item in stored["comments"]]
         ingestion_warnings = list(stored.get("warnings", []))
-    elif source == "同梱サンプル":
+    elif source == "サンプル":
         article, comments = load_dataset(SAMPLE_PATH)
-    elif source == "正規化JSON":
-        uploaded = st.file_uploader("ArticleとCommentを含むJSON", type=["json"])
+    elif source == "JSONアップロード":
+        uploaded = st.file_uploader("記事とコメントを含むJSON", type=["json"])
         if uploaded is None:
             st.info("JSONを選択すると分析できます。形式はREADMEを参照してください。")
             return
         try:
             article, comments = parse_dataset(json.load(uploaded))
         except (json.JSONDecodeError, ValidationError) as exc:
-            st.error(f"正規化JSONを読み込めません: {exc}")
+            st.error(f"JSONを読み込めません: {exc}")
             return
-    elif source == "コメントCSV＋手動本文":
+    elif source == "CSVアップロード":
         title = st.text_input("記事タイトル")
         body = st.text_area("記事本文", height=180)
         uploaded_csv = st.file_uploader(
@@ -176,7 +183,7 @@ def render_start(settings: Settings) -> None:
         article, comments = _manual_dataset(title, body, comments_text)
 
     mode = st.selectbox(
-        "分析モード",
+        "分析の深さ",
         ["quick", "standard", "full"],
         index=["quick", "standard", "full"].index(
             settings.analysis_default_mode
@@ -184,9 +191,9 @@ def render_start(settings: Settings) -> None:
             else "standard"
         ),
         format_func=lambda value: {
-            "quick": "クイック（最大500件）",
-            "standard": "標準（設定上限）",
-            "full": "フル（設定上限）",
+            "quick": "軽量（最大500件）",
+            "standard": "標準",
+            "full": "詳細",
         }[value],
     )
     mode_limit = {
@@ -198,19 +205,21 @@ def render_start(settings: Settings) -> None:
     for warning in ingestion_warnings:
         st.warning(warning)
     left, right, third = st.columns(3)
-    left.metric("コメント件数", len(comments))
+    left.metric("コメント", f"{len(comments)}件")
     right.metric(
-        "推定LLMバッチ数",
-        (len(comments) + settings.comment_batch_size - 1)
-        // settings.comment_batch_size,
+        "投稿時刻",
+        f"{sum(comment.posted_at is not None for comment in comments)}件",
     )
-    third.metric("APIモード", "OpenAI" if settings.openai_api_key else "ローカル暫定")
+    third.metric(
+        "分析エンジン",
+        "OpenAI" if settings.openai_api_key else "ローカル",
+    )
     st.write(f"**{article.title}**")
-    with st.expander("本文を確認"):
+    with st.expander("記事本文"):
         st.write(article.body or "本文なし")
     analyze, rerun = st.columns(2)
-    start = analyze.button("分析開始", type="primary", width="stretch")
-    force = rerun.button("再分析（キャッシュを更新）", width="stretch")
+    start = analyze.button("分析する", type="primary", width="stretch")
+    force = rerun.button("最新の状態で再分析", width="stretch")
     if start or force:
         # scikit-learn等の重い依存は、実際に分析するときだけ読み込む。
         from src.analysis.pipeline import AnalysisPipeline
@@ -228,15 +237,14 @@ def render_start(settings: Settings) -> None:
             st.session_state["bundle_json"] = bundle.model_dump_json()
             st.success(
                 "分析が完了しました。"
-                + ("（キャッシュを再利用）" if bundle.cache_hit else "")
-                + " 上部の各タブで結果を確認できます。"
+                + (" 保存済みの結果を表示しています。" if bundle.cache_hit else "")
             )
             st.rerun()
         except Exception as exc:
             st.error(
                 f"分析を完了できませんでした: {type(exc).__name__}: {exc}"
             )
-            st.info("入力形式と環境変数を確認してください。API障害時は再実行できます。")
+            st.info("入力内容とAPI設定を確認して、もう一度お試しください。")
 
 
 def main() -> None:
@@ -245,10 +253,11 @@ def main() -> None:
         page_icon="",
         layout="wide",
     )
-    st.title("ニュース・コメント分析ラボ")
+    st.title("Comment Analysis")
+    st.caption("記事とコメントの関係を、複数の視点から整理します。")
     settings = Settings.from_env()
     start_tab, relation_tab, opinion_tab, emotion_tab, quality_tab = st.tabs(
-        ["分析開始", "本文との関係", "意見空間", "感情・拡散", "議論品質"]
+        ["入力", "記事との関連", "意見分布", "感情の推移", "コメント品質"]
     )
     with start_tab:
         render_start(settings)
@@ -266,8 +275,8 @@ def main() -> None:
         for warning in bundle.warnings:
             st.sidebar.warning(warning)
         st.sidebar.caption(
-            f"分析ID {bundle.run.run_id[:8]} / {bundle.run.comment_count}件 / "
-            f"{'cache' if bundle.cache_hit else 'fresh'}"
+            f"{bundle.run.comment_count}件 / "
+            f"{'保存済み' if bundle.cache_hit else '最新'}"
         )
         with relation_tab:
             render_relation(bundle)
@@ -280,7 +289,7 @@ def main() -> None:
     else:
         for tab in (relation_tab, opinion_tab, emotion_tab, quality_tab):
             with tab:
-                st.info("「分析開始」タブでデータを選び、分析を実行してください。")
+                st.info("「入力」タブでデータを選び、分析してください。")
     st.divider()
     st.caption(
         "この分析は取得できたコメントのみを対象とし、社会全体の世論を表しません。"
